@@ -372,6 +372,37 @@ export function DashboardPage() {
                 <CopyIcon />
               </IconButton>
             </Box>
+            <Alert severity="warning" sx={{ mt: 2 }}>
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                需要重新生成 API Key？
+              </Typography>
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                onClick={async () => {
+                  if (!confirm("确定要重新生成 API Key 吗？当前的 Key 将立即失效！")) return;
+                  try {
+                    const response = await fetchWithAuth("/api/user/regenerate-key", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ confirm: true }),
+                    });
+                    if (response.ok) {
+                      const data: any = await response.json();
+                      alert(`新的 API Key: ${data.apiKey}\n\n请立即更新您的 Claude Code 配置！`);
+                      window.location.reload();
+                    } else {
+                      throw new Error("重新生成失败");
+                    }
+                  } catch (err: any) {
+                    alert(`错误: ${err.message}`);
+                  }
+                }}
+              >
+                重新生成 API Key
+              </Button>
+            </Alert>
           </Paper>
         </CardContent>
       </Card>

@@ -3,6 +3,8 @@ import App from "./App";
 import HomePage from "./pages/HomePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { AuthCallbackPage } from "./pages/AuthCallbackPage";
+import { KeysPage } from "./pages/KeysPage";
+import { LogsPage } from "./pages/LogsPage";
 
 /**
  * 路由配置
@@ -20,6 +22,8 @@ export const AppRoutes = () => (
     <Route path="/" element={<App />}>
       <Route index element={<HomePage />} />
       <Route path="dashboard" element={<DashboardPage />} />
+      <Route path="keys" element={<KeysPage />} />
+      <Route path="logs" element={<LogsPage />} />
       <Route path="auth/callback" element={<AuthCallbackPage />} />
       {/* 在这里添加新的路由 */}
     </Route>

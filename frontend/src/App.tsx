@@ -104,6 +104,30 @@ function App() {
                 >
                   控制台
                 </Button>
+                <Button
+                  component={RouterLink}
+                  to="/keys"
+                  sx={{
+                    my: 2,
+                    color: "inherit",
+                    display: "block",
+                    fontWeight: location.pathname === "/keys" ? "bold" : "normal",
+                  }}
+                >
+                  密钥管理
+                </Button>
+                <Button
+                  component={RouterLink}
+                  to="/logs"
+                  sx={{
+                    my: 2,
+                    color: "inherit",
+                    display: "block",
+                    fontWeight: location.pathname === "/logs" ? "bold" : "normal",
+                  }}
+                >
+                  网关日志
+                </Button>
               </>
             )}
 
@@ -138,6 +162,14 @@ function App() {
                   <MenuItem onClick={handleMenuClose} component={RouterLink} to="/dashboard">
                     <DashboardIcon sx={{ mr: 1 }} />
                     控制台
+                  </MenuItem>
+                  <MenuItem onClick={handleMenuClose} component={RouterLink} to="/keys">
+                    <AccountIcon sx={{ mr: 1 }} />
+                    密钥管理
+                  </MenuItem>
+                  <MenuItem onClick={handleMenuClose} component={RouterLink} to="/logs">
+                    <DashboardIcon sx={{ mr: 1 }} />
+                    网关日志
                   </MenuItem>
                   <MenuItem onClick={handleLogout}>
                     <LogoutIcon sx={{ mr: 1 }} />

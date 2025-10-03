@@ -35,6 +35,16 @@ export const PRESET_API_PROVIDERS: ApiProvider[] = [
     description: "Google Gemini API 服务",
   },
   {
+    name: "谷歌Gemini (Cloudflare代理)",
+    baseUrl: "https://gemini-openai-proxy.zuisyu.workers.dev/v1beta/openai",
+    description: "Google Gemini API - Cloudflare Workers 代理，绕过区域限制",
+  },
+  {
+    name: "谷歌Gemini (GitHub代理)",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    description: "Google Gemini API - GitHub Pages 代理方案",
+  },
+  {
     name: "通义千问",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     description: "阿里云通义千问 API 服务",
@@ -97,11 +107,11 @@ export const FIXED_MODEL_RULES: ModelMappingRule[] = [
   },
 ];
 
-// 系统默认映射配置
+// 系统默认映射配置 - 支持最新的 Claude 模型
 export const DEFAULT_MAPPING_CONFIG: ModelMappingConfig = {
-  haiku: "gemini-2.5-flash-nothinking",
-  sonnet: "gemini-2.5-pro",
-  opus: "gemini-2.5-pro",
+  haiku: "gemini-2.0-flash-exp", // 轻量级快速模型
+  sonnet: "gemini-2.0-flash-thinking-exp", // 平衡模型，支持 Claude 3.5 Sonnet v2 和 Sonnet 4
+  opus: "gemini-exp-1206", // 高性能模型
 };
 
 // 默认的 API 配置

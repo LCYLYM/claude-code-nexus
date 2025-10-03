@@ -5,6 +5,9 @@ import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1";
 import features from "./feature";
 import auth from "./auth";
 import config from "./config";
+import keys from "./keys";
+import logs from "./logs";
+import user from "./user";
 import { Bindings } from "../types";
 
 type Variables = {
@@ -21,7 +24,10 @@ const api = new OpenAPIHono<{ Bindings: Bindings; Variables: Variables }>()
   // Register API routes using chaining
   .route("/features", features)
   .route("/auth", auth)
-  .route("/config", config);
+  .route("/config", config)
+  .route("/keys", keys)
+  .route("/logs", logs)
+  .route("/user", user);
 
 export type ApiRoutes = typeof api;
 
