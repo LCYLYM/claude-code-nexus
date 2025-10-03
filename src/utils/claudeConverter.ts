@@ -9,7 +9,7 @@ import type {
   OpenAIRequestSchema,
   ClaudeContentSchema,
   OpenAIMessageSchema,
-} from "../validators/claude.schema";
+} from "@common/validators/claude.schema";
 import { z } from "zod";
 
 // 类型推断

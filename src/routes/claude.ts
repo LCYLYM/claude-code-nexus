@@ -5,6 +5,9 @@ import { users } from "../db/schema";
 import { ClaudeRequestSchema } from "@common/validators/claude.schema";
 import { decryptApiKey } from "../utils/encryption";
 import { ModelMappingService } from "../services/modelMappingService";
+import { KeyRotationService } from "../services/keyRotationService";
+import { ProxyService } from "../services/proxyService";
+import { GatewayLogService } from "../services/gatewayLogService";
 import type { Bindings } from "../types";
 import * as drizzleSchema from "../db/schema";
 import { convertClaudeToOpenAI, convertOpenAIToClaude } from "../utils/claudeConverter";
@@ -199,6 +202,7 @@ claude.openapi(
     },
   }),
   async (c: any) => {
+    const startTime = Date.now();
     const db = c.get("db");
     const claudeRequest = c.req.valid("json");
 
@@ -223,28 +227,118 @@ claude.openapi(
         400,
       );
     }
-    if (!user.encryptedProviderApiKey) {
-      return c.json({ error: { type: "invalid_request_error", message: "User has not configured an API key" } }, 400);
+
+    // 初始化服务
+    const keyRotationService = new KeyRotationService(db, c.env.ENCRYPTION_KEY);
+    const proxyService = new ProxyService(db);
+    const logService = new GatewayLogService(db);
+
+    // 尝试使用多 key 轮询
+    let selectedKey = await keyRotationService.selectNextKey(user.id);
+    let targetApiKey: string;
+    let baseUrl: string;
+    let providerKeyId: string | undefined;
+
+    if (selectedKey) {
+      // 使用多 key 系统
+      targetApiKey = selectedKey.apiKey;
+      baseUrl = selectedKey.baseUrl;
+      providerKeyId = selectedKey.id;
+      console.log(`Using provider key: ${selectedKey.keyName} (ID: ${selectedKey.id})`);
+    } else {
+      // 回退到用户配置的单个 key
+      if (!user.encryptedProviderApiKey) {
+        return c.json(
+          { error: { type: "invalid_request_error", message: "User has not configured an API key" } },
+          400,
+        );
+      }
+      const defaultApiConfig = mappingService.getDefaultApiConfig();
+      baseUrl = user.providerBaseUrl || defaultApiConfig.baseUrl;
+      targetApiKey = await decryptApiKey(user.encryptedProviderApiKey, c.env.ENCRYPTION_KEY);
+      console.log("Using legacy single key configuration");
     }
-    const defaultApiConfig = mappingService.getDefaultApiConfig();
-    const baseUrl = user.providerBaseUrl || defaultApiConfig.baseUrl;
-    const targetApiKey = await decryptApiKey(user.encryptedProviderApiKey, c.env.ENCRYPTION_KEY);
-    const targetUrl = baseUrl.endsWith("/") ? `${baseUrl}chat/completions` : `${baseUrl}/chat/completions`;
+
+    // 检查是否需要使用代理
+    let targetUrl = baseUrl.endsWith("/") ? `${baseUrl}chat/completions` : `${baseUrl}/chat/completions`;
+    if (proxyService.shouldUseProxy(baseUrl)) {
+      const proxy = await proxyService.selectBestProxy("gemini");
+      if (proxy) {
+        targetUrl = proxyService.applyProxy(targetUrl, proxy);
+        console.log(`Using proxy: ${proxy.name} -> ${targetUrl}`);
+      }
+    }
 
     const openAIRequest = convertClaudeToOpenAI(claudeRequest, targetModel);
 
-    const res = await fetch(targetUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${targetApiKey}`,
-      },
-      body: JSON.stringify(openAIRequest),
-    });
+    let res: Response;
+    let requestSuccess = true;
+    let errorMessage: string | undefined;
 
-    if (!res.ok) {
-      console.error(`Upstream API request failed: ${res.status} ${res.statusText}`);
-      return c.newResponse(res.body, res.status, res.headers);
+    try {
+      res = await fetch(targetUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${targetApiKey}`,
+        },
+        body: JSON.stringify(openAIRequest),
+      });
+
+      if (!res.ok) {
+        requestSuccess = false;
+        errorMessage = `Upstream API request failed: ${res.status} ${res.statusText}`;
+        console.error(errorMessage);
+
+        // 记录失败
+        if (providerKeyId) {
+          await keyRotationService.recordFailure(providerKeyId);
+        }
+
+        // 记录到网关日志
+        await logService.logRequest({
+          userId: user.id,
+          requestModel: modelKeyword,
+          targetModel: targetModel,
+          latencyMs: Date.now() - startTime,
+          statusCode: res.status,
+          isSuccess: false,
+          errorMessage: errorMessage,
+          providerKeyId: providerKeyId,
+          streamMode: claudeRequest.stream || false,
+        });
+
+        return c.newResponse(res.body, res.status, res.headers);
+      }
+
+      // 记录成功
+      if (providerKeyId) {
+        await keyRotationService.recordSuccess(providerKeyId);
+      }
+    } catch (error: any) {
+      requestSuccess = false;
+      errorMessage = error.message || "Unknown error";
+      console.error("Fetch error:", error);
+
+      // 记录失败
+      if (providerKeyId) {
+        await keyRotationService.recordFailure(providerKeyId);
+      }
+
+      // 记录到网关日志
+      await logService.logRequest({
+        userId: user.id,
+        requestModel: modelKeyword,
+        targetModel: targetModel,
+        latencyMs: Date.now() - startTime,
+        statusCode: 500,
+        isSuccess: false,
+        errorMessage: errorMessage,
+        providerKeyId: providerKeyId,
+        streamMode: claudeRequest.stream || false,
+      });
+
+      return c.json({ error: { type: "api_error", message: errorMessage } }, 500);
     }
 
     const inputLength = claudeRequest.messages.reduce((total: number, msg: any) => {
@@ -266,10 +360,37 @@ claude.openapi(
     }, 0);
 
     if (claudeRequest.stream) {
-      return handleStreamingResponse(c, res, claudeRequest.model, inputLength, user.username);
+      return handleStreamingResponse(
+        c,
+        res,
+        claudeRequest.model,
+        inputLength,
+        user.username,
+        startTime,
+        user.id,
+        targetModel,
+        providerKeyId,
+        logService,
+      );
     } else {
-      const openAIResponse = await res.json();
+      const openAIResponse: any = await res.json();
       const claudeResponse = convertOpenAIToClaude(openAIResponse, claudeRequest.model);
+
+      // 记录到网关日志
+      await logService.logRequest({
+        userId: user.id,
+        requestModel: modelKeyword,
+        targetModel: targetModel,
+        requestTokens: openAIResponse.usage?.prompt_tokens,
+        responseTokens: openAIResponse.usage?.completion_tokens,
+        totalTokens: openAIResponse.usage?.total_tokens,
+        latencyMs: Date.now() - startTime,
+        statusCode: 200,
+        isSuccess: true,
+        providerKeyId: providerKeyId,
+        streamMode: false,
+      });
+
       return c.json(claudeResponse);
     }
   },
@@ -281,6 +402,11 @@ async function handleStreamingResponse(
   originalModel: string,
   inputLength: number,
   username: string,
+  startTime: number,
+  userId: string,
+  targetModel: string,
+  providerKeyId: string | undefined,
+  logService: GatewayLogService,
 ) {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
@@ -346,8 +472,24 @@ async function handleStreamingResponse(
 
       clearInterval(heartbeatInterval);
       converter.generateFinishEvents(finishReason, usage).forEach((event) => controller.enqueue(encoder.encode(event)));
+
+      // 记录到网关日志
+      await logService.logRequest({
+        userId,
+        requestModel: originalModel,
+        targetModel: targetModel,
+        requestTokens: usage.input_tokens,
+        responseTokens: usage.output_tokens,
+        totalTokens: usage.input_tokens + usage.output_tokens,
+        latencyMs: Date.now() - startTime,
+        statusCode: 200,
+        isSuccess: true,
+        providerKeyId: providerKeyId,
+        streamMode: true,
+      });
+
       console.log(
-        `📤 Stream finished | User: ${username} | Input: ${inputLength} chars | Output: ${totalOutputLength} chars`,
+        `📤 Stream finished | User: ${username} | Input: ${inputLength} chars | Output: ${totalOutputLength} chars | Tokens: ${usage.input_tokens + usage.output_tokens}`,
       );
       controller.close();
     },
